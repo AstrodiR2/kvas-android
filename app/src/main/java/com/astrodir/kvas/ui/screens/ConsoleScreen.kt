@@ -12,6 +12,7 @@ import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
@@ -109,7 +110,7 @@ fun ConsolePanel(visible: Boolean, term: TerminalState, onClose: () -> Unit) {
 }
 
 @Composable
-private fun ConsoleBody(term: TerminalState, onClose: () -> Unit) {
+private fun ColumnScope.ConsoleBody(term: TerminalState, onClose: () -> Unit) {
     val c = K.c
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
