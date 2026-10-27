@@ -66,55 +66,84 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.astrodir.kvas.R
+import com.astrodir.kvas.termux.TermuxBootstrap
 import com.astrodir.kvas.ui.components.KIcon
 import com.astrodir.kvas.ui.components.press
 import com.astrodir.kvas.ui.theme.K
 import com.astrodir.kvas.ui.theme.KvasGrad
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlin.random.Random
+import kotlinx.coroutines.withContext
+import java.io.File
 
 private const val LAST = 3
 private val Amber2 = Color(0xFFF0B429)
 
+/** Статус шага установки терминала для UI (см. InstallPage). */
+sealed class InstallStatus {
+    object Idle : InstallStatus()
+    data class Downloading(val pct: Int, val mb: Float, val totalMb: Float) : InstallStatus()
+    data class Extracting(val done: Int, val total: Int) : InstallStatus()
+    object Done : InstallStatus()
+    data class Failed(val message: String) : InstallStatus()
+}
+
 /**
  * Онбординг: приветствие → имя → цель → установка терминала.
- * ВАЖНО: шаг установки пока СИМУЛИРУЕТ прогресс (как в HTML-макете).
- * Реальную загрузку/распаковку подключим, когда решим, как запускать бинарники.
+ * Шаг установки запускает настоящую загрузку+распаковку Termux bootstrap
+ * (см. TermuxBootstrap) — прогресс и МБ/количество файлов реальные, не симуляция.
  */
 @Composable
-fun OnboardingScreen(onFinish: (name: String, purpose: Int) -> Unit) {
+fun OnboardingScreen(home: File, onFinish: (name: String, purpose: Int) -> Unit) {
     val c = K.c
     val scope = rememberCoroutineScope()
     val pager = rememberPagerState(pageCount = { 4 })
     var pos by remember { mutableIntStateOf(0) }
     var name by remember { mutableStateOf("") }
     var purpose by remember { mutableIntStateOf(-1) }
-    var progress by remember { mutableFloatStateOf(0f) }
     var started by remember { mutableStateOf(false) }
-    var done by remember { mutableStateOf(false) }
+    var status by remember { mutableStateOf<InstallStatus>(InstallStatus.Idle) }
+    val done = status is InstallStatus.Done
 
     fun go(n: Int) { pos = n; scope.launch { pager.animateScrollToPage(n) } }
 
-    LaunchedEffect(pos) {
-        if (pos == LAST && !started) {
-            started = true
-            while (progress < 100f) {
-                delay(220)
-                val step = when {
-                    progress < 40f -> 2f + Random.nextFloat() * 5f
-                    progress < 85f -> 1f + Random.nextFloat() * 4f
-                    else -> 0.6f + Random.nextFloat() * 2.2f
-                }
-                progress = minOf(100f, progress + step)
+    fun startInstall() {
+        started = true
+        scope.launch {
+            if (TermuxBootstrap.isInstalled(home)) {
+                status = InstallStatus.Done
+                return@launch
             }
-            delay(450)
-            done = true
+            withContext(Dispatchers.IO) {
+                TermuxBootstrap.install(home) { p ->
+                    val mapped = when (p) {
+                        is TermuxBootstrap.Progress.Downloading -> {
+                            val totalMb = if (p.total > 0) p.total / 1_048_576f else 0f
+                            val mb = p.bytes / 1_048_576f
+                            val pct = if (p.total > 0) ((p.bytes * 100) / p.total).toInt().coerceIn(0, 40) else 0
+                            InstallStatus.Downloading(pct, mb, totalMb)
+                        }
+                        is TermuxBootstrap.Progress.Extracting -> InstallStatus.Extracting(p.done, p.total)
+                        is TermuxBootstrap.Progress.Error -> InstallStatus.Failed(p.message)
+                        TermuxBootstrap.Progress.Done -> InstallStatus.Done
+                    }
+                    scope.launch(Dispatchers.Main) { status = mapped }
+                }
+            }
         }
     }
 
-    val disabled = (pos == LAST && !done) || (pos == 1 && name.isBlank()) || (pos == 2 && purpose < 0)
-    val btnText = if (pos == LAST) (if (done) "Начать пользоваться" else "Устанавливаем…") else "Далее"
+    LaunchedEffect(pos) { if (pos == LAST && !started) startInstall() }
+
+    val disabled = (pos == LAST && !done && status !is InstallStatus.Failed) ||
+        (pos == 1 && name.isBlank()) || (pos == 2 && purpose < 0)
+    val btnText = when {
+        pos != LAST -> "Далее"
+        done -> "Начать пользоваться"
+        status is InstallStatus.Failed -> "Повторить"
+        else -> "Устанавливаем…"
+    }
 
     Column(
         Modifier.fillMaxSize().background(c.bg)
@@ -143,7 +172,7 @@ fun OnboardingScreen(onFinish: (name: String, purpose: Int) -> Unit) {
                 0 -> WelcomePage()
                 1 -> NamePage(name) { if (it.length <= 24) name = it }
                 2 -> PurposePage(purpose) { purpose = it }
-                else -> InstallPage(name, progress, done)
+                else -> InstallPage(name, status)
             }
         }
 
@@ -151,7 +180,14 @@ fun OnboardingScreen(onFinish: (name: String, purpose: Int) -> Unit) {
             Box(
                 Modifier.fillMaxWidth()
                     .alpha(if (disabled) 0.4f else 1f)
-                    .press { if (!disabled) { if (pos == LAST) onFinish(name.trim(), purpose) else go(pos + 1) } }
+                    .press {
+                        when {
+                            status is InstallStatus.Failed -> { started = false; status = InstallStatus.Idle; startInstall() }
+                            disabled -> {}
+                            pos == LAST -> onFinish(name.trim(), purpose)
+                            else -> go(pos + 1)
+                        }
+                    }
                     .clip(RoundedCornerShape(18.dp)).background(KvasGrad).padding(vertical = 17.dp),
                 contentAlignment = Alignment.Center,
             ) { Text(btnText, color = c.onAc, fontSize = 16.sp, fontWeight = FontWeight.Bold) }
@@ -252,31 +288,57 @@ private fun PurposePage(selected: Int, onSelect: (Int) -> Unit) {
 }
 
 @Composable
-private fun InstallPage(name: String, progress: Float, done: Boolean) {
+private fun InstallPage(name: String, status: InstallStatus) {
     val c = K.c
     val termBg = if (c.dark) Color(0xFF080705) else Color(0xFF1C160B)
     val termText = if (c.dark) Color(0xFFEFE6D2) else Color(0xFFEADFC6)
     val termDim = if (c.dark) Color(0xFF7C705A) else Color(0xFF8C7E62)
     val termLine = Amber2.copy(alpha = 0.15f)
-    val q = progress.toInt().coerceIn(0, 100)
+    val done = status is InstallStatus.Done
+    val failed = status as? InstallStatus.Failed
+
+    // Реальный общий процент: скачивание — это первые 40%, распаковка — оставшиеся 60.
+    val q: Int = when (status) {
+        is InstallStatus.Downloading -> status.pct
+        is InstallStatus.Extracting -> (40 + (status.done.coerceAtMost(status.total) * 60 / status.total.coerceAtLeast(1))).coerceIn(40, 99)
+        InstallStatus.Done -> 100
+        is InstallStatus.Failed -> 0
+        InstallStatus.Idle -> 0
+    }
     // 0 ждёт, 1 идёт, 2 готово
-    val st = when {
-        q < 40 -> intArrayOf(1, 0, 0)
-        q < 85 -> intArrayOf(2, 1, 0)
-        q < 100 -> intArrayOf(2, 2, 1)
-        else -> intArrayOf(2, 2, 2)
+    val st = when (status) {
+        is InstallStatus.Downloading -> intArrayOf(1, 0, 0)
+        is InstallStatus.Extracting -> intArrayOf(2, 1, 0)
+        InstallStatus.Done -> intArrayOf(2, 2, 2)
+        else -> intArrayOf(0, 0, 0)
     }
     val det = listOf(
-        when { q < 40 -> "%.1f / 46 МБ".format(q / 40f * 46f); else -> "46 МБ" },
-        when { q < 40 -> ""; q < 85 -> "${((q - 40) / 45f * 600).toInt()}/600"; else -> "600/600" },
-        "",
+        when (status) {
+            is InstallStatus.Downloading -> if (status.totalMb > 0) "%.1f / %.1f МБ".format(status.mb, status.totalMb) else "%.1f МБ".format(status.mb)
+            is InstallStatus.Extracting, InstallStatus.Done -> "готово"
+            else -> ""
+        },
+        when (status) {
+            is InstallStatus.Extracting -> "${status.done}/${status.total}"
+            InstallStatus.Done -> "готово"
+            else -> ""
+        },
+        if (done) "готово" else "",
     )
     val labels = listOf("Скачивание пакета", "Распаковка файлов", "Настройка окружения")
 
     Column(Modifier.fillMaxSize().padding(start = 24.dp, end = 24.dp, top = 28.dp)) {
         PageHead(
-            if (done) (if (name.isNotBlank()) "Готово, ${name.trim()}!" else "Готово, разработчик!") else "Готовим терминал",
-            if (done) "Окружение установлено, разработчик. Можно начинать." else "Разработчик, устанавливаем окружение один раз — дальше всё будет мгновенно",
+            when {
+                failed != null -> "Не получилось установить"
+                done -> if (name.isNotBlank()) "Готово, ${name.trim()}!" else "Готово, разработчик!"
+                else -> "Готовим терминал"
+            },
+            when {
+                failed != null -> "Ошибка: ${failed.message}. Проверьте соединение и нажмите «Повторить»."
+                done -> "Окружение установлено, разработчик. Можно начинать."
+                else -> "Разработчик, устанавливаем окружение один раз — дальше всё будет мгновенно"
+            },
         )
         Column(Modifier.padding(top = 28.dp).fillMaxWidth().shadow(12.dp, RoundedCornerShape(20.dp)).clip(RoundedCornerShape(20.dp)).background(termBg)) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {

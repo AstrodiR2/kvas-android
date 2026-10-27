@@ -54,7 +54,7 @@ class MainActivity : ComponentActivity() {
             KvasTheme {
                 var onboarded by remember { mutableStateOf(prefs.getBoolean("onboarded", false)) }
                 if (!onboarded) {
-                    OnboardingScreen { name, purpose ->
+                    OnboardingScreen(home) { name, purpose ->
                         prefs.edit().putBoolean("onboarded", true).putString("userName", name).putInt("purpose", purpose).apply()
                         onboarded = true
                     }

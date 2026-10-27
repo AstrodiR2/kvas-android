@@ -8,13 +8,17 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
+import com.astrodir.kvas.termux.TermuxBootstrap
 import java.io.File
 import java.io.OutputStream
 import kotlin.concurrent.thread
 
 /**
- * Настоящая оболочка Android: /system/bin/sh (toybox) в домашней папке приложения.
- * Без PTY: работают обычные команды (ls, cd, cat, ping, ...), но не vim/htop/pkg/apt.
+ * Если Termux bootstrap установлен (TermuxBootstrap.isInstalled) — запускает
+ * настоящий bash из распакованного окружения, с PATH/PREFIX на нашу папку,
+ * так что pkg/apt/python и т.д. работают по-настоящему.
+ * Иначе — запасной вариант: системный /system/bin/sh (ls/cd/cat и т.п.,
+ * без pkg/apt).
  */
 class TerminalState(private val home: File) {
     val lines = mutableStateListOf<String>()
@@ -30,21 +34,30 @@ class TerminalState(private val home: File) {
     private var alive = false
     private val main = Handler(Looper.getMainLooper())
     private val ansi = Regex("\u001B\\[[0-9;?]*[ -/]*[@-~]")
+    private val prefix = TermuxBootstrap.prefixDir(home)
+    private val usingTermux = TermuxBootstrap.isInstalled(home)
 
     init {
         lines.add("Квас · консоль")
-        lines.add("shell: /system/bin/sh")
+        lines.add(if (usingTermux) "shell: ${prefix.absolutePath}/bin/bash (Termux)" else "shell: /system/bin/sh (без pkg/apt — Termux не установлен)")
         lines.add("HOME: ${home.absolutePath}")
         start()
     }
 
     private fun start() {
         try {
-            val pb = ProcessBuilder("/system/bin/sh").redirectErrorStream(true)
+            val shellPath = if (usingTermux) File(prefix, "bin/bash").absolutePath else "/system/bin/sh"
+            val pb = ProcessBuilder(shellPath).redirectErrorStream(true)
             pb.directory(home)
             pb.environment().apply {
                 put("HOME", home.absolutePath)
                 put("TERM", "dumb")
+                if (usingTermux) {
+                    put("PREFIX", prefix.absolutePath)
+                    put("PATH", "${prefix.absolutePath}/bin:${System.getenv("PATH") ?: "/system/bin"}")
+                    put("LD_LIBRARY_PATH", "${prefix.absolutePath}/lib")
+                    put("TMPDIR", "${prefix.absolutePath}/tmp")
+                }
             }
             val p = pb.start()
             proc = p
