@@ -48,6 +48,7 @@ class KvasState(private val prefs: SharedPreferences) {
     var typingChat by mutableStateOf<Chat?>(null)
 
     var logo by mutableIntStateOf(prefs.getInt("kvasLogo", 0) % LOGOS.size)
+    var userName by mutableStateOf(prefs.getString("userName", "") ?: "")
     var searchOn by mutableStateOf(false)
     var memoryOn by mutableStateOf(true)
 

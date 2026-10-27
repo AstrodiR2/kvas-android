@@ -35,6 +35,7 @@ import com.astrodir.kvas.terminal.TerminalState
 import com.astrodir.kvas.ui.screens.ChatScreen
 import com.astrodir.kvas.ui.screens.ConnectorsPage
 import com.astrodir.kvas.ui.screens.ConsolePanel
+import com.astrodir.kvas.ui.screens.OnboardingScreen
 import com.astrodir.kvas.ui.screens.PlusSheet
 import com.astrodir.kvas.ui.screens.SideMenuContent
 import com.astrodir.kvas.ui.theme.K
@@ -49,7 +50,19 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         val prefs = getSharedPreferences("kvas", MODE_PRIVATE)
         val home = filesDir
-        setContent { KvasTheme { KvasApp(prefs, home) } }
+        setContent {
+            KvasTheme {
+                var onboarded by remember { mutableStateOf(prefs.getBoolean("onboarded", false)) }
+                if (!onboarded) {
+                    OnboardingScreen { name, purpose ->
+                        prefs.edit().putBoolean("onboarded", true).putString("userName", name).putInt("purpose", purpose).apply()
+                        onboarded = true
+                    }
+                } else {
+                    KvasApp(prefs, home)
+                }
+            }
+        }
     }
 }
 

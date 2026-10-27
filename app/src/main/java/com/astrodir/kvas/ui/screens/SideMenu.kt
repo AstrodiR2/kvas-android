@@ -111,9 +111,9 @@ fun SideMenuContent(
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.size(34.dp).clip(CircleShape).background(KvasGrad), contentAlignment = Alignment.Center) {
-                        Text("Г", color = c.onAc, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                        Text((state.userName.ifBlank { "Р" }).take(1).uppercase(), color = c.onAc, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                     }
-                    Text("Годжо Сатору", color = c.t1, fontSize = 14.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(start = 10.dp))
+                    Text(state.userName.ifBlank { "Разработчик" }, color = c.t1, fontSize = 14.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(start = 10.dp))
                 }
                 Box(
                     Modifier.press { state.newChat(); onOpenChat() }.size(44.dp).clip(CircleShape).background(KvasGrad),
